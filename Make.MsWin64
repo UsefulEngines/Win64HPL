@@ -1,0 +1,869 @@
+####################################################################
+#
+#		Build script for HPL Linpack on Windows Server x64.  The script
+#   may be used to build HPL from either the Visual Studio cmd shell
+#   or from the free R2 Platform SDK cmd shell.
+#
+#   Platform SDK:  http://www.microsoft.com/downloads/details.aspx?FamilyId=0BAF2B35-C656-4969-ACE8-E4C0C0716ADB&displaylang=en
+#  
+#   Visual Studio 2005:  http://msdn.microsoft.com/vstudio/products/trial/
+#
+#   1.  Download HPL 1.0a from http://www.netlib.org/benchmark/hpl/
+#
+#		2.  Place hpl.tgz to c:\scratch
+#
+#		3.  Unzip to 'hpl'
+#
+#   4.  Download the Windows HPC Server 2008 "HPC Pack SDK" from http://Connect.Microsoft.Com or http://msdn.microsoft.com.  
+#	      Install the SDK to c:\HPCPackSDK.
+#	      NOTE the use of paths without spaces.  Save yourself some pain.
+#
+#		5.  See http://www.netlib.org/blas/faq.html for machine-specific optimized BLAS libraries
+#	      Download and install ACML from AMD and/or MKL from Intel.  This 
+#				script defaults to use MKL installed to the C:\scratch\hpl\_MKL\ directory.
+#
+#		6.  Modify the variables in this section to match your build environment.
+#   
+#   7.  NOTE: If building with the Win64 Platform SDK, also link with 
+#       library "bufferoverflowU.lib"
+#   
+#   8.  Usage:  Copy this file to the HPL install directory 
+#       (e.g. c:\scratch\hpl) and type the following:
+#
+#								c:\> nmake [DEBUG=1] -f Make.MsWin64 [all | clean]
+#
+#   9.  Send any questions via my blog at http://blogs.msdn.com/philpenn.
+#
+#  10.  NOTE:  You'll need to modify the file testing\timer\HPL_timer_walltime.c to
+#       look like the code in testing\ptimer\HPL_ptimer_walltime.c.  The easiest way
+#       to do this is to copy HPL_ptimer_walltime.c into testing\timer\HPL_timer_walltime.c
+#       and replace the HPL_ptimer_walltime() function with HPL_timer_walltime.c().  
+#
+
+THISFILE = Make.MsWin64
+MAKE = $(MAKE) /S /NOLOGO
+
+# ----------------------------------------------------------------------
+# - HPL Directory Structure / HPL library ------------------------------
+# ----------------------------------------------------------------------
+#
+TOPdir = 				E:\scratch\hpl
+INCdir = 				$(TOPdir)\include
+XHPL =					xhpl.exe
+
+# ----------------------------------------------------------------------
+# - MPI directories - library ------------------------------------------
+# ----------------------------------------------------------------------
+# MPinc tells the  C  compiler where to find the Message Passing library
+# header files,  MPlib  is defined  to be the name of  the library to be
+# used. The variable MPdir is only used for defining MPinc and MPlib.
+#
+MPdir        = $(CCP_SDK)
+MPinc        = "$(MPdir)Include"
+
+# Platform SDK builds also require the bufferoverflowu.lib
+!ifdef MSSDK
+MPlib 			 = "$(CCP_SDK)lib\AMD64\msmpi.lib" "$(MSSDK)\lib\AMD64\bufferoverflowu.lib" 
+!else
+MPlib 			 = "$(CCP_SDK)lib\AMD64\msmpi.lib" 
+!endif
+
+#
+# ----------------------------------------------------------------------
+# - Linear Algebra library (BLAS or VSIPL) -----------------------------
+# ----------------------------------------------------------------------
+# LAinc tells the  C  compiler where to find the Linear Algebra  library
+# header files,  LAlib  is defined  to be the name of  the library to be
+# used. The variable LAdir is only used for defining LAinc and LAlib.
+
+# Use ATLAS BLAS library
+#HPL_CBLAS     = -DHPL_CALL_CBLAS
+#LAdir        = c:\ATLAS\lib
+#LAinc        = $(LAdir)\include
+#LAlib        = $(LAdir)\libcblas.a $(LAdir)\libatlas.a
+
+# Use AMD ACML BLAS library
+#LAdir        = "c:\scratch\hpl\_ACML3.5.0\win64_mp"
+#LAinc        = $(LAdir)\include
+#LAlib        = $(LAdir)\lib\libacml_dll.lib
+
+# Use Intel MKL BLAS library - NOTE the lack of spaces in the install path!
+LAdir        = "E:\scratch\hpl\_MKL\9.0\em64t\lib"
+LAinc        = $(LAdir)\include
+LAlib        = $(LAdir)\mkl_dll.lib $(LAdir)\libguide40.lib
+
+# ----------------------------------------------------------------------
+# - F77 / C interface --------------------------------------------------
+# ----------------------------------------------------------------------
+# You can skip this section  if and only if  you are not planning to use
+# a  BLAS  library featuring a Fortran 77 interface.  Otherwise,  it  is
+# necessary  to  fill out the  F2CDEFS  variable  with  the  appropriate
+# options.  **One and only one**  option should be chosen in **each** of
+# the 3 following categories:
+#
+# 1) name space (How C calls a Fortran 77 routine)
+#
+# -DAdd_              : all lower case and a suffixed underscore  (Suns,
+#                       Intel, ...),                           [default]
+# -DNoChange          : all lower case (IBM RS6000),
+# -DUpCase            : all upper case (Cray),
+# -DAdd__             : the FORTRAN compiler in use is f2c.
+#
+# 2) C and Fortran 77 integer mapping
+#
+# -DF77_INTEGER=int   : Fortran 77 INTEGER is a C int,         [default]
+# -DF77_INTEGER=long  : Fortran 77 INTEGER is a C long,
+# -DF77_INTEGER=short : Fortran 77 INTEGER is a C short.
+#
+# 3) Fortran 77 string handling
+#
+# -DStringSunStyle    : The string address is passed at the string loca-
+#                       tion on the stack, and the string length is then
+#                       passed as  an  F77_INTEGER  after  all  explicit
+#                       stack arguments,                       [default]
+# -DStringStructPtr   : The address  of  a  structure  is  passed  by  a
+#                       Fortran 77  string,  and the structure is of the
+#                       form: struct {char *cp; F77_INTEGER len;},
+# -DStringStructVal   : A structure is passed by value for each  Fortran
+#                       77 string,  and  the  structure is  of the form:
+#                       struct {char *cp; F77_INTEGER len;},
+# -DStringCrayStyle   : Special option for  Cray  machines,  which  uses
+#                       Cray  fcd  (fortran  character  descriptor)  for
+#                       interoperation.
+#
+F2CDEFS      =
+
+#
+# ----------------------------------------------------------------------
+# - HPL includes / libraries / specifics -------------------------------
+# ----------------------------------------------------------------------
+#
+HPL_INCLUDES = -I$(INCdir) -I$(LAinc) -I$(MPinc)
+HPL_LIBS     = $(LAlib) $(MPlib)
+
+# - Compile time options -----------------------------------------------
+#
+# -DHPL_COPY_L           force the copy of the panel L before bcast;
+# -DHPL_CALL_CBLAS       call the cblas interface;
+# -DHPL_CALL_VSIPL       call the vsip  library;
+# -DHPL_DETAILED_TIMING  enable detailed timers;
+#
+# By default HPL will:
+#    *) not copy L before broadcast,
+#    *) call the Fortran 77 BLAS interface
+#    *) not display detailed timing information.
+#
+HPL_OPTS = $(HPL_CBLAS) -D HPL_USE_CLOCK -D _CRT_SECURE_NO_DEPRECATE -D STDC_HEADERS
+
+# ----------------------------------------------------------------------
+#
+HPL_DEFS     = $(F2CDEFS) $(HPL_OPTS) $(HPL_INCLUDES) 
+
+# Account for Platform SDK machine target differences
+!ifdef MSSDK
+MACHINE = AMD64
+!else
+MACHINE = X64
+!endif
+
+!ifdef DEBUG
+CFLAGS= 			$(CFLAGS) /nologo /Zi /EHsc $(HPL_DEFS)
+LFLAGS= 			$(LFLAGS) /DEBUG /MACHINE:$(MACHINE) 
+!else
+CFLAGS= 			$(CFLAGS) /nologo /O2 /GL /EHsc $(HPL_DEFS)
+LFLAGS= 			$(LFLAGS) /LTCG /MACHINE:$(MACHINE)  
+!endif
+
+# Additional build environment specific CFLAGS
+!ifdef MSSDK
+CFLAGS = $(CFLAGS)
+!else
+CFLAGS = $(CFLAGS) /favor:AMD64
+!endif
+
+
+# -------------------------  TARGETS  ----------------------------------
+#
+default: all
+all: AUXIL BLAS COMM GRID PANEL PAUXIL PFACT PGESV MATGEN TIMER PMATGEN PTIMER PTEST HPL.DAT
+
+
+################################################################
+# 											AUXIL 
+#
+AUXILdir = $(TOPdir)\src\auxil
+
+AUXILsource = \
+	$(AUXILdir)\HPL_dlacpy.c $(AUXILdir)\HPL_dlatcpy.c $(AUXILdir)\HPL_fprintf.c  \
+	$(AUXILdir)\HPL_warn.c $(AUXILdir)\HPL_warn.c $(AUXILdir)\HPL_abort.c $(AUXILdir)\HPL_dlaprnt.c \
+	$(AUXILdir)\HPL_dlange.c $(AUXILdir)\HPL_dlamch.c
+
+AUXILincludes = $(INCdir)\hpl_misc.h $(INCdir)\hpl_blas.h $(INCdir)\hpl_auxil.h
+
+AUXILobjects = \
+	HPL_dlacpy.obj HPL_dlatcpy.obj HPL_fprintf.obj HPL_warn.obj HPL_abort.obj  \
+	HPL_dlaprnt.obj HPL_dlange.obj HPL_dlamch.obj           
+
+# compilation units
+HPL_dlacpy.obj: $(AUXILdir)\HPL_dlacpy.c  
+	$(CC) $(CFLAGS) /c $**
+HPL_dlatcpy.obj: $(AUXILdir)\HPL_dlatcpy.c    
+	$(CC) $(CFLAGS) /c $**
+HPL_fprintf.obj: $(AUXILdir)\HPL_fprintf.c  
+	$(CC) $(CFLAGS) /c $**
+HPL_warn.obj: $(AUXILdir)\HPL_warn.c      
+	$(CC) $(CFLAGS) /c $**
+HPL_abort.obj: $(AUXILdir)\HPL_abort.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaprnt.obj: $(AUXILdir)\HPL_dlaprnt.c        
+	$(CC) $(CFLAGS) /c $**
+HPL_dlange.obj: $(AUXILdir)\HPL_dlange.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_dlamch.obj: $(AUXILdir)\HPL_dlamch.c           
+	$(CC) $(CFLAGS) /c $**
+
+AUXIL: $(AUXILsource) $(AUXILincludes)
+	@echo "******* AUXIL ********" 
+	$(MAKE) -f $(THISFILE) AUXILbuild
+
+AUXILbuild: $(AUXILobjects)
+
+
+################################################################
+#   											BLAS 
+#
+BLASdir = $(TOPdir)\src\blas
+
+BLASsource = \
+	 $(BLASdir)\HPL_dcopy.c $(BLASdir)\HPL_daxpy.c $(BLASdir)\HPL_dscal.c  \
+   $(BLASdir)\HPL_idamax.c $(BLASdir)\HPL_dgemv.c $(BLASdir)\HPL_dtrsv.c  \
+   $(BLASdir)\HPL_dger.c $(BLASdir)\HPL_dgemm.c  $(BLASdir)\HPL_dtrsm.c
+
+BLASincludes = $(INCdir)\hpl_misc.h $(INCdir)\hpl_blas.h
+
+BLASobjects =  \
+	HPL_dcopy.obj HPL_daxpy.obj HPL_dscal.obj HPL_idamax.obj HPL_dgemv.obj \
+	HPL_dtrsv.obj HPL_dger.obj HPL_dgemm.obj HPL_dtrsm.obj          
+
+# compilation units
+HPL_dcopy.obj            : $(BLASdir)\HPL_dcopy.c 
+	$(CC) $(CFLAGS) /c $**
+HPL_daxpy.obj            : $(BLASdir)\HPL_daxpy.c  
+	$(CC) $(CFLAGS) /c $**
+HPL_dscal.obj            : $(BLASdir)\HPL_dscal.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_idamax.obj           : $(BLASdir)\HPL_idamax.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_dgemv.obj            : $(BLASdir)\HPL_dgemv.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_dtrsv.obj            : $(BLASdir)\HPL_dtrsv.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_dger.obj             : $(BLASdir)\HPL_dger.c             
+	$(CC) $(CFLAGS) /c $**
+HPL_dgemm.obj            : $(BLASdir)\HPL_dgemm.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_dtrsm.obj            : $(BLASdir)\HPL_dtrsm.c            
+	$(CC) $(CFLAGS) /c $**
+
+BLAS: $(BLASsource) $(BLASincludes)
+	@echo "******* BLAS ********" 
+	$(MAKE) -f $(THISFILE) BLASbuild
+
+BLASbuild: $(BLASobjects)
+
+
+################################################################
+#   											COMM
+#
+COMMdir = $(TOPdir)\src\comm
+
+COMMsource = \
+	 $(COMMdir)\HPL_1ring.c $(COMMdir)\HPL_1rinM.c $(COMMdir)\HPL_2ring.c  \
+   $(COMMdir)\HPL_2rinM.c $(COMMdir)\HPL_blong.c $(COMMdir)\HPL_blonM.c  \
+   $(COMMdir)\HPL_packL.c $(COMMdir)\HPL_copyL.c $(COMMdir)\HPL_binit.c  \
+   $(COMMdir)\HPL_bcast.c $(COMMdir)\HPL_bwait.c $(COMMdir)\HPL_send.c   \
+   $(COMMdir)\HPL_recv.c $(COMMdir)\HPL_sdrv.c
+
+COMMincludes = \
+	 $(INCdir)\hpl_misc.h $(INCdir)\hpl_pmisc.h $(INCdir)\hpl_grid.h \
+   $(INCdir)\hpl_panel.h $(INCdir)\hpl_pgesv.h
+
+COMMobjects = \
+	 HPL_1ring.obj HPL_1rinM.obj HPL_2ring.obj \
+   HPL_2rinM.obj HPL_blong.obj HPL_blonM.obj \
+   HPL_packL.obj HPL_copyL.obj HPL_binit.obj \
+   HPL_bcast.obj HPL_bwait.obj HPL_send.obj  \
+   HPL_recv.obj HPL_sdrv.obj
+          
+# compilation units
+HPL_1ring.obj            : $(COMMdir)\HPL_1ring.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_1rinM.obj            : $(COMMdir)\HPL_1rinM.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_2ring.obj            : $(COMMdir)\HPL_2ring.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_2rinM.obj            : $(COMMdir)\HPL_2rinM.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_blong.obj            : $(COMMdir)\HPL_blong.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_blonM.obj            : $(COMMdir)\HPL_blonM.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_packL.obj            : $(COMMdir)\HPL_packL.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_copyL.obj            : $(COMMdir)\HPL_copyL.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_binit.obj            : $(COMMdir)\HPL_binit.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_bcast.obj            : $(COMMdir)\HPL_bcast.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_bwait.obj            : $(COMMdir)\HPL_bwait.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_send.obj             : $(COMMdir)\HPL_send.c             
+	$(CC) $(CFLAGS) /c $**
+HPL_recv.obj             : $(COMMdir)\HPL_recv.c             
+	$(CC) $(CFLAGS) /c $**
+HPL_sdrv.obj             : $(COMMdir)\HPL_sdrv.c             
+	$(CC) $(CFLAGS) /c $**
+
+COMM: $(COMMsource) $(COMMincludes)
+	@echo "******* COMM ********" 
+	$(MAKE) -f $(THISFILE) COMMbuild
+
+COMMbuild: $(COMMobjects)
+
+
+
+################################################################
+#   											GRID
+#
+GRIDdir = $(TOPdir)\src\grid
+
+GRIDsource = \
+	 $(GRIDdir)\HPL_grid_init.c $(GRIDdir)\HPL_pnum.c $(GRIDdir)\HPL_grid_info.c  \
+   $(GRIDdir)\HPL_grid_exit.c $(GRIDdir)\HPL_broadcast.c $(GRIDdir)\HPL_reduce.c \
+   $(GRIDdir)\HPL_all_reduce.c $(GRIDdir)\HPL_barrier.c $(GRIDdir)\HPL_min.c \
+   $(GRIDdir)\HPL_max.c $(GRIDdir)\HPL_sum.c
+
+GRIDincludes = $(INCdir)\hpl_misc.h  $(INCdir)\hpl_pmisc.h  $(INCdir)\hpl_grid.h
+
+GRIDobjects = \
+	 HPL_grid_init.obj HPL_pnum.obj HPL_grid_info.obj  \
+   HPL_grid_exit.obj HPL_broadcast.obj HPL_reduce.obj \
+   HPL_all_reduce.obj HPL_barrier.obj HPL_min.obj \
+   HPL_max.obj HPL_sum.obj
+           
+# compilation units
+HPL_grid_init.obj        : $(GRIDdir)\HPL_grid_init.c        
+	$(CC) $(CFLAGS) /c $**
+HPL_pnum.obj             : $(GRIDdir)\HPL_pnum.c             
+	$(CC) $(CFLAGS) /c $**
+HPL_grid_info.obj        : $(GRIDdir)\HPL_grid_info.c        
+	$(CC) $(CFLAGS) /c $**
+HPL_grid_exit.obj        : $(GRIDdir)\HPL_grid_exit.c        
+	$(CC) $(CFLAGS) /c $**
+HPL_broadcast.obj        : $(GRIDdir)\HPL_broadcast.c        
+	$(CC) $(CFLAGS) /c $**
+HPL_reduce.obj           : $(GRIDdir)\HPL_reduce.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_all_reduce.obj       : $(GRIDdir)\HPL_all_reduce.c       
+	$(CC) $(CFLAGS) /c $**
+HPL_barrier.obj          : $(GRIDdir)\HPL_barrier.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_min.obj              : $(GRIDdir)\HPL_min.c              
+	$(CC) $(CFLAGS) /c $**
+HPL_max.obj              : $(GRIDdir)\HPL_max.c              
+	$(CC) $(CFLAGS) /c $**
+HPL_sum.obj              : $(GRIDdir)\HPL_sum.c              
+	$(CC) $(CFLAGS) /c $**
+
+GRID: $(GRIDsource) $(GRIDincludes)
+	@echo "******* GRID ********" 
+	$(MAKE) -f $(THISFILE) GRIDbuild
+
+GRIDbuild: $(GRIDobjects)
+
+
+
+################################################################
+#   											PANEL
+#
+PANELdir = $(TOPdir)\src\panel
+
+PANELsource = \
+	$(PANELdir)\HPL_pdpanel_new.c $(PANELdir)\HPL_pdpanel_init.c  \
+	$(PANELdir)\HPL_pdpanel_disp.c $(PANELdir)\HPL_pdpanel_free.c
+
+PANELincludes = \
+	$(INCdir)\hpl_misc.h   $(INCdir)\hpl_blas.h  $(INCdir)\hpl_auxil.h \
+	$(INCdir)\hpl_pmisc.h  $(INCdir)\hpl_grid.h  $(INCdir)\hpl_comm.h  \
+  $(INCdir)\hpl_pauxil.h $(INCdir)\hpl_panel.h $(INCdir)\hpl_pfact.h \
+  $(INCdir)\hpl_pgesv.h
+
+PANELobjects = HPL_pdpanel_new.obj HPL_pdpanel_init.obj HPL_pdpanel_disp.obj  \
+	HPL_pdpanel_free.obj
+         
+# compilation units
+HPL_pdpanel_new.obj      : $(PANELdir)\HPL_pdpanel_new.c      
+	$(CC) $(CFLAGS) /c $**
+HPL_pdpanel_init.obj     : $(PANELdir)\HPL_pdpanel_init.c     
+	$(CC) $(CFLAGS) /c $**
+HPL_pdpanel_disp.obj     : $(PANELdir)\HPL_pdpanel_disp.c     
+	$(CC) $(CFLAGS) /c $**
+HPL_pdpanel_free.obj     : $(PANELdir)\HPL_pdpanel_free.c     
+	$(CC) $(CFLAGS) /c $**
+
+PANEL: $(PANELsource) $(PANELincludes)
+	@echo "******* PANEL ********" 
+	$(MAKE) -f $(THISFILE) PANELbuild
+
+PANELbuild: $(PANELobjects)
+
+
+
+################################################################
+#   											PAUXIL
+#
+PAUXILdir = $(TOPdir)\src\pauxil
+
+PAUXILsource = \
+	 $(PAUXILdir)\HPL_indxg2l.c  $(PAUXILdir)\HPL_indxg2lp.c  $(PAUXILdir)\HPL_indxg2p.c  \
+   $(PAUXILdir)\HPL_indxl2g.c  $(PAUXILdir)\HPL_infog2l.c  $(PAUXILdir)\HPL_numroc.c   \
+   $(PAUXILdir)\HPL_numrocI.c  $(PAUXILdir)\HPL_dlaswp00N.c  $(PAUXILdir)\HPL_dlaswp10N.c  \
+   $(PAUXILdir)\HPL_dlaswp01N.c  $(PAUXILdir)\HPL_dlaswp01T.c  $(PAUXILdir)\HPL_dlaswp02N.c  \
+   $(PAUXILdir)\HPL_dlaswp03N.c  $(PAUXILdir)\HPL_dlaswp03T.c  $(PAUXILdir)\HPL_dlaswp04N.c  \
+   $(PAUXILdir)\HPL_dlaswp04T.c  $(PAUXILdir)\HPL_dlaswp05N.c  $(PAUXILdir)\HPL_dlaswp05T.c  \
+   $(PAUXILdir)\HPL_dlaswp06N.c  $(PAUXILdir)\HPL_dlaswp06T.c  $(PAUXILdir)\HPL_pwarn.c    \
+   $(PAUXILdir)\HPL_pabort.c   $(PAUXILdir)\HPL_pdlaprnt.c  $(PAUXILdir)\HPL_pdlamch.c  \
+   $(PAUXILdir)\HPL_pdlange.c
+
+PAUXILincludes = \
+	 $(INCdir)\hpl_misc.h   $(INCdir)\hpl_blas.h   $(INCdir)\hpl_auxil.h \
+   $(INCdir)\hpl_pmisc.h  $(INCdir)\hpl_grid.h   $(INCdir)\hpl_pauxil.h
+
+PAUXILobjects = \
+	 HPL_indxg2l.obj          HPL_indxg2lp.obj         HPL_indxg2p.obj \
+   HPL_indxl2g.obj          HPL_infog2l.obj          HPL_numroc.obj           \
+   HPL_numrocI.obj          HPL_dlaswp00N.obj        HPL_dlaswp10N.obj        \
+   HPL_dlaswp01N.obj        HPL_dlaswp01T.obj        HPL_dlaswp02N.obj        \
+   HPL_dlaswp03N.obj        HPL_dlaswp03T.obj        HPL_dlaswp04N.obj        \
+   HPL_dlaswp04T.obj        HPL_dlaswp05N.obj        HPL_dlaswp05T.obj        \
+   HPL_dlaswp06N.obj        HPL_dlaswp06T.obj        HPL_pwarn.obj            \
+   HPL_pabort.obj           HPL_pdlaprnt.obj         HPL_pdlamch.obj          \
+   HPL_pdlange.obj
+           
+# compilation units
+HPL_indxg2l.obj          : $(PAUXILdir)\HPL_indxg2l.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_indxg2lp.obj         : $(PAUXILdir)\HPL_indxg2lp.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_indxg2p.obj          : $(PAUXILdir)\HPL_indxg2p.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_indxl2g.obj          : $(PAUXILdir)\HPL_indxl2g.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_infog2l.obj          : $(PAUXILdir)\HPL_infog2l.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_numroc.obj           : $(PAUXILdir)\HPL_numroc.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_numrocI.obj          : $(PAUXILdir)\HPL_numrocI.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp00N.obj        : $(PAUXILdir)\HPL_dlaswp00N.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp10N.obj        : $(PAUXILdir)\HPL_dlaswp10N.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp01N.obj        : $(PAUXILdir)\HPL_dlaswp01N.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp01T.obj        : $(PAUXILdir)\HPL_dlaswp01T.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp02N.obj        : $(PAUXILdir)\HPL_dlaswp02N.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp03N.obj        : $(PAUXILdir)\HPL_dlaswp03N.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp03T.obj        : $(PAUXILdir)\HPL_dlaswp03T.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp04N.obj        : $(PAUXILdir)\HPL_dlaswp04N.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp04T.obj        : $(PAUXILdir)\HPL_dlaswp04T.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp05N.obj        : $(PAUXILdir)\HPL_dlaswp05N.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp05T.obj        : $(PAUXILdir)\HPL_dlaswp05T.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp06N.obj        : $(PAUXILdir)\HPL_dlaswp06N.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_dlaswp06T.obj        : $(PAUXILdir)\HPL_dlaswp06T.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_pwarn.obj            : $(PAUXILdir)\HPL_pwarn.c             
+	$(CC) $(CFLAGS) /c $**
+HPL_pabort.obj           : $(PAUXILdir)\HPL_pabort.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_pdlaprnt.obj         : $(PAUXILdir)\HPL_pdlaprnt.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_pdlamch.obj          : $(PAUXILdir)\HPL_pdlamch.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_pdlange.obj          : $(PAUXILdir)\HPL_pdlange.c           
+	$(CC) $(CFLAGS) /c $**
+
+PAUXIL: $(PAUXILsource) $(PAUXILincludes)
+	@echo "******* PAUXIL ********" 
+	$(MAKE) -f $(THISFILE) PAUXILbuild
+
+PAUXILbuild: $(PAUXILobjects)
+
+
+
+################################################################
+#   											PFACT
+#
+PFACTdir = $(TOPdir)\src\pfact
+
+PFACTsource = \
+	 $(PFACTdir)\HPL_dlocmax.c $(PFACTdir)\HPL_dlocswpN.c         $(PFACTdir)\HPL_dlocswpT.c         \
+   $(PFACTdir)\HPL_pdmxswp.c          $(PFACTdir)\HPL_pdpancrN.c         $(PFACTdir)\HPL_pdpancrT.c         \
+   $(PFACTdir)\HPL_pdpanllN.c         $(PFACTdir)\HPL_pdpanllT.c         $(PFACTdir)\HPL_pdpanrlN.c         \
+   $(PFACTdir)\HPL_pdpanrlT.c         $(PFACTdir)\HPL_pdrpanllN.c        $(PFACTdir)\HPL_pdrpanllT.c        \
+   $(PFACTdir)\HPL_pdrpancrN.c        $(PFACTdir)\HPL_pdrpancrT.c        $(PFACTdir)\HPL_pdrpanrlN.c        \
+   $(PFACTdir)\HPL_pdrpanrlT.c        $(PFACTdir)\HPL_pdfact.c
+
+PFACTincludes = \
+	 $(INCdir)\hpl_misc.h  $(INCdir)\hpl_blas.h   $(INCdir)\hpl_auxil.h \
+   $(INCdir)\hpl_pmisc.h $(INCdir)\hpl_pauxil.h $(INCdir)\hpl_pfact.h
+
+PFACTobjects = \
+	 HPL_dlocmax.obj          HPL_dlocswpN.obj         HPL_dlocswpT.obj         \
+   HPL_pdmxswp.obj          HPL_pdpancrN.obj         HPL_pdpancrT.obj         \
+   HPL_pdpanllN.obj         HPL_pdpanllT.obj         HPL_pdpanrlN.obj         \
+   HPL_pdpanrlT.obj         HPL_pdrpanllN.obj        HPL_pdrpanllT.obj        \
+   HPL_pdrpancrN.obj        HPL_pdrpancrT.obj        HPL_pdrpanrlN.obj        \
+   HPL_pdrpanrlT.obj        HPL_pdfact.obj
+          
+# compilation units
+HPL_dlocmax.obj          : $(PFACTdir)\HPL_dlocmax.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_dlocswpN.obj         : $(PFACTdir)\HPL_dlocswpN.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_dlocswpT.obj         : $(PFACTdir)\HPL_dlocswpT.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_pdmxswp.obj          : $(PFACTdir)\HPL_pdmxswp.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_pdpancrN.obj         : $(PFACTdir)\HPL_pdpancrN.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_pdpancrT.obj         : $(PFACTdir)\HPL_pdpancrT.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_pdpanllN.obj         : $(PFACTdir)\HPL_pdpanllN.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_pdpanllT.obj         : $(PFACTdir)\HPL_pdpanllT.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_pdpanrlN.obj         : $(PFACTdir)\HPL_pdpanrlN.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_pdpanrlT.obj         : $(PFACTdir)\HPL_pdpanrlT.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_pdrpanllN.obj        : $(PFACTdir)\HPL_pdrpanllN.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_pdrpanllT.obj        : $(PFACTdir)\HPL_pdrpanllT.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_pdrpancrN.obj        : $(PFACTdir)\HPL_pdrpancrN.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_pdrpancrT.obj        : $(PFACTdir)\HPL_pdrpancrT.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_pdrpanrlN.obj        : $(PFACTdir)\HPL_pdrpanrlN.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_pdrpanrlT.obj        : $(PFACTdir)\HPL_pdrpanrlT.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_pdfact.obj           : $(PFACTdir)\HPL_pdfact.c            
+	$(CC) $(CFLAGS) /c $**
+
+PFACT: $(PFACTsource) $(PFACTincludes)
+	@echo "******* PFACT ********" 
+	$(MAKE) -f $(THISFILE) PFACTbuild
+
+PFACTbuild: $(PFACTobjects)
+
+
+
+################################################################
+#   											PGESV
+#
+PGESVdir = $(TOPdir)\src\pgesv
+
+PGESVsource = \
+   $(PGESVdir)\HPL_pipid.c $(PGESVdir)\HPL_plindx0.c $(PGESVdir)\HPL_pdlaswp00N.c \
+   $(PGESVdir)\HPL_pdlaswp00T.c $(PGESVdir)\HPL_perm.c $(PGESVdir)\HPL_logsort.c  \
+   $(PGESVdir)\HPL_plindx10.c         $(PGESVdir)\HPL_plindx1.c          $(PGESVdir)\HPL_spreadN.c          \
+   $(PGESVdir)\HPL_spreadT.c          $(PGESVdir)\HPL_rollN.c            $(PGESVdir)\HPL_rollT.c            \
+   $(PGESVdir)\HPL_equil.c            $(PGESVdir)\HPL_pdlaswp01N.c       $(PGESVdir)\HPL_pdlaswp01T.c       \
+   $(PGESVdir)\HPL_pdupdateNN.c       $(PGESVdir)\HPL_pdupdateNT.c       $(PGESVdir)\HPL_pdupdateTN.c       \
+   $(PGESVdir)\HPL_pdupdateTT.c       $(PGESVdir)\HPL_pdtrsv.c           $(PGESVdir)\HPL_pdgesv0.c          \
+   $(PGESVdir)\HPL_pdgesvK1.c         $(PGESVdir)\HPL_pdgesvK2.c         $(PGESVdir)\HPL_pdgesv.c
+
+PGESVincludes = \
+	 $(INCdir)\hpl_misc.h   $(INCdir)\hpl_blas.h   $(INCdir)\hpl_auxil.h \
+   $(INCdir)\hpl_pmisc.h  $(INCdir)\hpl_grid.h   $(INCdir)\hpl_comm.h  \
+   $(INCdir)\hpl_pauxil.h $(INCdir)\hpl_panel.h  $(INCdir)\hpl_pfact.h \
+   $(INCdir)\hpl_pgesv.h
+
+PGESVobjects = \
+	 HPL_pipid.obj            HPL_plindx0.obj          HPL_pdlaswp00N.obj       \
+   HPL_pdlaswp00T.obj       HPL_perm.obj             HPL_logsort.obj          \
+   HPL_plindx10.obj         HPL_plindx1.obj          HPL_spreadN.obj          \
+   HPL_spreadT.obj          HPL_rollN.obj            HPL_rollT.obj            \
+   HPL_equil.obj            HPL_pdlaswp01N.obj       HPL_pdlaswp01T.obj       \
+   HPL_pdupdateNN.obj       HPL_pdupdateNT.obj       HPL_pdupdateTN.obj       \
+   HPL_pdupdateTT.obj       HPL_pdtrsv.obj           HPL_pdgesv0.obj          \
+   HPL_pdgesvK1.obj         HPL_pdgesvK2.obj         HPL_pdgesv.obj
+
+# compilation units
+HPL_pipid.obj            : $(PGESVdir)\HPL_pipid.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_plindx0.obj          : $(PGESVdir)\HPL_plindx0.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_pdlaswp00N.obj       : $(PGESVdir)\HPL_pdlaswp00N.c       
+	$(CC) $(CFLAGS) /c $**
+HPL_pdlaswp00T.obj       : $(PGESVdir)\HPL_pdlaswp00T.c       
+	$(CC) $(CFLAGS) /c $**
+HPL_perm.obj             : $(PGESVdir)\HPL_perm.c             
+	$(CC) $(CFLAGS) /c $**
+HPL_logsort.obj          : $(PGESVdir)\HPL_logsort.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_plindx10.obj         : $(PGESVdir)\HPL_plindx10.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_plindx1.obj          : $(PGESVdir)\HPL_plindx1.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_spreadN.obj          : $(PGESVdir)\HPL_spreadN.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_spreadT.obj          : $(PGESVdir)\HPL_spreadT.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_rollN.obj            : $(PGESVdir)\HPL_rollN.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_rollT.obj            : $(PGESVdir)\HPL_rollT.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_equil.obj            : $(PGESVdir)\HPL_equil.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_pdlaswp01N.obj       : $(PGESVdir)\HPL_pdlaswp01N.c       
+	$(CC) $(CFLAGS) /c $**
+HPL_pdlaswp01T.obj       : $(PGESVdir)\HPL_pdlaswp01T.c       
+	$(CC) $(CFLAGS) /c $**
+HPL_pdupdateNN.obj       : $(PGESVdir)\HPL_pdupdateNN.c       
+	$(CC) $(CFLAGS) /c $**
+HPL_pdupdateNT.obj       : $(PGESVdir)\HPL_pdupdateNT.c       
+	$(CC) $(CFLAGS) /c $**
+HPL_pdupdateTN.obj       : $(PGESVdir)\HPL_pdupdateTN.c       
+	$(CC) $(CFLAGS) /c $**
+HPL_pdupdateTT.obj       : $(PGESVdir)\HPL_pdupdateTT.c       
+	$(CC) $(CFLAGS) /c $**
+HPL_pdtrsv.obj           : $(PGESVdir)\HPL_pdtrsv.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_pdgesv0.obj          : $(PGESVdir)\HPL_pdgesv0.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_pdgesvK1.obj         : $(PGESVdir)\HPL_pdgesvK1.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_pdgesvK2.obj         : $(PGESVdir)\HPL_pdgesvK2.c         
+	$(CC) $(CFLAGS) /c $**
+HPL_pdgesv.obj           : $(PGESVdir)\HPL_pdgesv.c           
+	$(CC) $(CFLAGS) /c $**
+
+PGESV: $(PGESVsource) $(PGESVincludes)
+	@echo "******* PGESV ********" 
+	$(MAKE) -f $(THISFILE) PGESVbuild
+
+PGESVbuild: $(PGESVobjects)
+
+
+################################################################
+#   											MATGEN
+#
+MATGENdir = $(TOPdir)\testing\matgen
+
+MATGENsource = \
+	 $(MATGENdir)\HPL_dmatgen.obj $(MATGENdir)\HPL_ladd.obj  $(MATGENdir)\HPL_lmul.obj \
+   $(MATGENdir)\HPL_xjumpm.obj $(MATGENdir)\HPL_jumpit.obj $(MATGENdir)\HPL_rand.obj \
+   $(MATGENdir)\HPL_setran.obj
+
+MATGENincludes = \
+	 $(INCdir)\hpl_misc.h   $(INCdir)\hpl_blas.h  $(INCdir)\hpl_auxil.h  \
+   $(INCdir)\hpl_matgen.h
+
+MATGENobjects = \
+	 HPL_dmatgen.obj          HPL_ladd.obj             HPL_lmul.obj  \
+   HPL_xjumpm.obj           HPL_jumpit.obj           HPL_rand.obj  \
+   HPL_setran.obj
+
+# compilation units
+HPL_dmatgen.obj          : $(MATGENdir)\HPL_dmatgen.c          
+	$(CC) $(CFLAGS) /c $**
+HPL_ladd.obj             : $(MATGENdir)\HPL_ladd.c             
+	$(CC) $(CFLAGS) /c $**
+HPL_lmul.obj             : $(MATGENdir)\HPL_lmul.c             
+	$(CC) $(CFLAGS) /c $**
+HPL_xjumpm.obj           : $(MATGENdir)\HPL_xjumpm.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_jumpit.obj           : $(MATGENdir)\HPL_jumpit.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_rand.obj             : $(MATGENdir)\HPL_rand.c             
+	$(CC) $(CFLAGS) /c $**
+HPL_setran.obj           : $(MATGENdir)\HPL_setran.c           
+	$(CC) $(CFLAGS) /c $**
+
+MATGEN: $(MATGENsource) $(MATGENincludes)
+	@echo "******* MATGEN ********" 
+	$(MAKE) -f $(THISFILE) MATGENbuild
+
+MATGENbuild: $(MATGENobjects)
+
+
+
+################################################################
+#   											TIMER
+#
+TIMERdir = $(TOPdir)\testing\timer
+
+TIMERsource = $(TIMERdir)\HPL_timer.c  $(TIMERdir)\HPL_timer_cputime.c $(TIMERdir)\HPL_timer_walltime.c
+
+TIMERincludes = $(INCdir)\hpl_pmisc.h $(INCdir)\hpl_timer.h
+
+TIMERobjects = HPL_timer.obj  HPL_timer_cputime.obj  HPL_timer_walltime.obj
+
+# compilation units
+HPL_timer.obj            : $(TIMERdir)\HPL_timer.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_timer_cputime.obj    : $(TIMERdir)\HPL_timer_cputime.c    
+	$(CC) $(CFLAGS) /c $**
+HPL_timer_walltime.obj   : $(TIMERdir)\HPL_timer_walltime.c   
+	$(CC) $(CFLAGS) /c $**
+
+TIMER: $(TIMERsource) $(TIMERincludes)
+	@echo "******* TIMER ********" 
+	$(MAKE) -f $(THISFILE) TIMERbuild
+
+TIMERbuild: $(TIMERobjects)
+
+
+
+################################################################
+#   											PMATGEN
+#
+PMATGENdir = $(TOPdir)\testing\pmatgen
+
+PMATGENsource = $(PMATGENdir)\HPL_pdmatgen.c
+
+PMATGENincludes = \
+	 $(INCdir)\hpl_misc.h   $(INCdir)\hpl_matgen.h $(INCdir)\hpl_pmisc.h \
+   $(INCdir)\hpl_pauxil.h $(INCdir)\hpl_pmatgen.h
+
+PMATGENobjects = HPL_pdmatgen.obj           
+
+# compilation units
+HPL_pdmatgen.obj         : $(PMATGENdir)\HPL_pdmatgen.c         
+	$(CC) $(CFLAGS) /c $**
+
+PMATGEN: $(PMATGENsource) $(PMATGENincludes)
+	@echo "******* PMATGEN ********" 
+	$(MAKE) -f $(THISFILE) PMATGENbuild
+
+PMATGENbuild: $(PMATGENobjects)
+
+
+
+################################################################
+#   											PTIMER
+#
+PTIMERdir = $(TOPdir)\testing\ptimer
+
+PTIMERsource = $(PTIMERdir)\HPL_ptimer.c $(PTIMERdir)\HPL_ptimer_cputime.c $(PTIMERdir)\HPL_ptimer_walltime.c
+
+PTIMERincludes = $(INCdir)\hpl_pmisc.h  $(INCdir)\hpl_ptimer.h
+
+PTIMERobjects = HPL_ptimer.obj HPL_ptimer_cputime.obj HPL_ptimer_walltime.obj
+
+# compilation units
+HPL_ptimer.obj            : $(PTIMERdir)\HPL_ptimer.c            
+	$(CC) $(CFLAGS) /c $**
+HPL_ptimer_cputime.obj    : $(PTIMERdir)\HPL_ptimer_cputime.c    
+	$(CC) $(CFLAGS) /c $**
+HPL_ptimer_walltime.obj   : $(PTIMERdir)\HPL_ptimer_walltime.c   
+	$(CC) $(CFLAGS) /c $**
+
+PTIMER: $(PTIMERsource) $(PTIMERincludes)
+	@echo "******* PTIMER ********" 
+	$(MAKE) -f $(THISFILE) PTIMERbuild
+
+PTIMERbuild: $(PTIMERobjects)
+
+
+
+################################################################
+#   											PTEST
+#
+#		NOTE:  Build the final target, xhpl.exe.
+#
+XHPL_DEPENDS = \
+	 $(AUXILobjects)  $(BLASobjects)  $(COMMobjects)  $(GRIDobjects) \
+	 $(PANELobjects)  $(PAUXILobjects) $(PFACTobjects) $(PGESVobjects) \
+	 $(MATGENobjects) $(TIMERobjects) $(PMATGENobjects) $(PTIMERobjects)
+
+PTESTdir = $(TOPdir)\testing\ptest
+
+PTESTsource = $(PTESTdir)\HPL_pddriver.c $(PTESTdir)\HPL_pdinfo.c $(PTESTdir)\HPL_pdtest.c
+
+PTESTincludes = \
+	 $(INCdir)\hpl_misc.h   $(INCdir)\hpl_blas.h  $(INCdir)\hpl_auxil.h   \
+   $(INCdir)\hpl_gesv.h   $(INCdir)\hpl_pmisc.h $(INCdir)\hpl_pauxil.h  \
+   $(INCdir)\hpl_panel.h  $(INCdir)\hpl_pgesv.h $(INCdir)\hpl_pmatgen.h \
+   $(INCdir)\hpl_ptimer.h $(INCdir)\hpl_ptest.h
+
+PTESTobjects = HPL_pddriver.obj HPL_pdinfo.obj HPL_pdtest.obj           
+
+# compilation units
+HPL_pddriver.obj         : $(PTESTdir)\HPL_pddriver.c        
+	$(CC) $(CFLAGS) /c $**
+HPL_pdinfo.obj           : $(PTESTdir)\HPL_pdinfo.c           
+	$(CC) $(CFLAGS) /c $**
+HPL_pdtest.obj           : $(PTESTdir)\HPL_pdtest.c           
+	$(CC) $(CFLAGS) /c $**
+
+PTEST: $(PTESTsource) $(PTESTincludes)
+	@echo "******* PTEST ********" 
+	$(MAKE) -f $(THISFILE) PTESTbuild
+
+PTESTbuild: $(PTESTobjects)
+	LINK /OUT:$(XHPL) $(LFLAGS) $(PTESTobjects) $(XHPL_DEPENDS) $(HPL_LIBS) 
+
+
+
+################################################################
+#												HPL.dat
+
+HPL.DAT:
+	@echo "******* Copy HPL.dat ********" 
+	@if exist $(PTESTdir)\HPL.dat @xcopy $(PTESTdir)\HPL.dat $(TOPdir)\*.* /D /Y
+	
+
+################################################################
+#   											REPLACE
+#	
+#	 NOTE:  Use this as a template for additional build targets.
+#
+REPLACEdir = $(TOPdir)\src\REPLACE
+
+REPLACEsource = 
+
+REPLACEincludes = 
+
+REPLACEobjects =            
+
+# compilation units
+#	$(CC) $(CFLAGS) /c $**
+
+REPLACE: $(REPLACEsource) $(REPLACEincludes)
+	@echo "******* REPLACE ********" 
+	$(MAKE) -f $(THISFILE) REPLACEbuild
+
+REPLACEbuild: $(REPLACEobjects)
+
+
+
+################################################################
+
+clean:
+	@del *.exe *.dll *.obj *.pdb *.ilk
+
+#########################   END  ################################

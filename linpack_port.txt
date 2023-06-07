@@ -1,0 +1,188 @@
+
+2023-06-07 : The content herein is now legacy information from 2006-2007 period supporting Windows HPC Server product development.
+             For future re-use or reference details contact Phil@UsefulEngines.com
+
+These instructions will allow you to pickup a stock distribution of the Linpack benchmark and compile it for use as a native Win64 binary linked with the native MSMPI implementation that is part of Windows HPC Server 2008 and the native ACML or MKL BLAS libraries.  
+
+Use the included Make.MsWin64 build script with either the Visual Studio 2005/2008 cmd line build environment or with the Platform SDK cmd line build environment.  See the instructions at the top of file Make.MsWin64.
+
+
+QuickStart
+========================
+TO build the HPL Linpack benchmark application...  The default configuration assumes 'x64 release build' and linking with the 'Intel MKL' BLAS library.  The 'HPC 2008 HPC Pack SDK' must be installed.   And, the 
+
+1. Setup
+	1.1 Unzip 'PortLinpack.zip' to 'c:\scratch\hpl'
+	1.2 Download and install a dependent BLAS library (see instructions below).
+
+2. Build using nmake
+	2.1 Open the x64 Visual Studio command shell. 
+			2.1.1 (Start->All Programs->Visual Studio 2008->Visual Studio Tools->Visual Studio 2008 x64 Cross Tools Command Prompt).
+	2.2 Navigate to the 'c:\scratch\hpl' folder.
+	2.3 Type 'nmake -f make.mswin64 all'
+	2.4 View the resultant 'xhpl.exe' file within the 'hpl' folder.   
+	2.5 Copy 'xhpl.exe' to the 'hpl\_RUN\MKL' folder.
+	2.6 Execute the 'xhpl.exe' application according to instructions below.
+	2.7 To clean the build results, type 'nmake -f make.mswin64 clean'
+	
+3. Build using Visual Studio
+	3.1 Open Visual Studio.
+	3.2 Open existing solution, select 'c:\scratch\hpl\xhpl.sln'.
+	3.3 Select the x64 release configuration.
+	3.4 Press F7 to build.
+	3.5 View the resultant 'xhpl.exe' file within the 'hpl\x64\release' folder.
+	3.6 Copy 'xhpl.exe' to the 'hpl\_RUN\MKL' folder.
+	3.7 To clean the build results, select 'build - clean'.
+
+
+Install necessary software
+==========================
+
+	Download and Install Visual Studio 2005/2008 from http://msdn.microsoft.com/vstudio/products/trial/
+
+OR
+
+	Download Platform SDK for Windows Server 2008 from http://msdn.microsoft.com/platformsdk/
+	 - Install Platform SDK to c:\program files\microsoft platform sdk
+
+	Download the HPC Pack SDK (currently available in Release Candidate versions) from http://connect.microsoft.com.   Register for the "Windows HPC Server 2008" beta program.   
+	
+	Install HPC Pack SDK to c:\HPCPackSDK.   Installing the SDK to a path containing no spaces is a good practice.   You'll need to override the default install path.
+
+	See http://www.netlib.org/blas/faq.html for machine-specific optimized BLAS libraries
+		- Download and install ACML from AMD and/or MKL from Intel
+	
+		Note:  The make.mswin64 build script expects to find the BLAS library files within the following folders.
+			- for MKL: "C:\scratch\hpl\_MKL\9.0\em64t\lib"
+			- for ACML: "C:\scratch\hpl\_ACML3.5.0\win64_mp"  
+			
+		Note:  You�ll want to download the ACML �acml-4.0.1-win64.exe� install files listed under the �PGI� category instead of the �Intel� category using the table displayed here:
+			- http://developer.amd.com/tools/acml/downloads/Pages/default.aspx
+			- The Intel category file works only with the Intel Fortran compiler.  The PGI download works with both Fortran and C++.
+ 
+
+	Download HPL 1.0a from http://www.netlib.org/benchmark/hpl/
+		- Place hpl.tgz into to c:\scratch
+
+
+Build using either Visual Studio or the Microsoft Platform SDK
+===============================================================
+
+	Unzip hpl.tgz to c:\scratch\hpl
+	
+	put Make.MsWin64 supplied with this package in the hpl directory
+
+	Read the file Make.MsWin64 for user-configuration parameters including:
+		 - Modify the Make.MsWin64 file to reference the correct TOPdir variable  
+		 - Modify the Make.MsWin64 file to reference the appropriate BLAS library (e.g. ACML or MKL)
+
+	Replace c:\scratch\hpl\testing\timer\hpl_timer_walltime.c implementation with the one from this zip package.
+	
+	c:\scratch\hpl> nmake [_DEBUG=1] -f Make.MsWin64 [all | clean]
+
+	Copy xhpl.exe, HPL.dat and the relevant runtime DLLs for the numerical libraries to the target x64 system
+		
+
+Run Linpack on a development workstation without using the HPC Server Job Scheduler
+===================================================================================
+	
+	Note:  You'll need to install the Windows HPC Server 2008 "HPC Pack" in client mode.
+
+	Open command line and start MPI daemon "smpd -d"
+	In another command line run "mpiexec -n 2 xhpl.exe"
+    
+
+Run Linpack on a CCS cluster Using the HPC Server Job Scheduler
+============================================================================
+
+	Copy all .dat, .exe and .dll files to a directory on a head node.  Lets 
+  assume it is \\headnode\scratch.
+
+	Modify the HPL.dat file to suit the target configuration (see more at
+  http://www.netlib.org/benchmark/hpl/tuning.html):
+
+	- Set the value of Ns to represent the problem size. The actual value
+	  will depend on the total memory available across all nodes.  A value
+	  of 12,000 seems to work well for 2GB systems, 26,000 for 4 nodes
+	  with 2GB each.  Note that there is non-linear dependency between
+	  the problem size and the amount of memory.  You should play with
+	  this value.  You can try setting it lower to get a quicker run and
+	  then up it to get more accurate GFlop numbers.  When it becomes too
+	  large the problem size will not fit in physical memory and the
+	  systems will start swapping to disk, drastically reducing the
+	  performance.  You can run multiple problem sizes with a single run
+	  by putting several numbers separated by spaces on the same line.  You
+	  will need to set the value on the previous line to the number of
+	  problem sizes you want to explore.
+
+	- Set the value of Ps to the number of processors (cores) you have on
+	  each node and the value of Qs to the number of nodes.  Note that
+	  Hyperthreading should be disabled in the BIOS. Again, you can
+	  explore different combinations of PxQ and set the value of the
+	  previous line to the number of combinations you are working with.
+
+	- Run the following command to schedule the job.  N should be the total number
+	  of processors you want to use and should be equal or greater than P * Q in
+	  the HPL.dat file.  
+
+	job submit /numcores:N /stdout:\\headnode\scratch\hpl.out mpiexec -wdir \\headnode\scratch xhpl.exe
+
+	- After the job starts, you should see HPL.out created in \\headnode\scratch.
+	  This file we contain the output being generated by the running Linpack.  
+
+	Monitor job completion using the HPC Server Administrator console or use the "job list" command.
+	When job completes, results can be found in \\headnode\scratch\hpl.out
+
+
+Using Excel as a front-end to Linpack and other reference info
+===============================================================
+
+	http://windowshpc.net/Blogs/performance/default.aspx
+	
+	http://channel9.msdn.com/shows/the+hpc+show
+	
+	http://code.msdn.microsoft.com/hpc
+	
+	http://www.microsoft.com/hpc
+	
+	
+
+Notes on Runtime BLAS Library Dependencies	
+==========================================
+Look at the following lines in Make.MsWin64
+
+# Use ATLAS BLAS library
+#HPL_CBLAS     = -DHPL_CALL_CBLAS
+#LAdir        = c:\ATLAS\lib
+#LAinc        = $(LAdir)\include
+#LAlib        = $(LAdir)\libcblas.a $(LAdir)\libatlas.a
+
+# Use AMD ACML BLAS library
+#LAdir        = "c:\scratch\hpl\_ACML3.5.0\win64_mp"
+#LAinc        = $(LAdir)\include
+#LAlib        = $(LAdir)\lib\libacml_dll.lib
+
+# Use Intel MKL BLAS library - NOTE the lack of spaces in the install path!
+LAdir        = "C:\scratch\hpl\_MKL\9.0\em64t\lib"
+LAinc        = $(LAdir)\include
+LAlib        = $(LAdir)\mkl_dll.lib $(LAdir)\libguide40.lib
+
+If you are linking with the AMD ACML BLAS library, the uncomment the AMD lines and comment the MKL lines.
+
+Also, you�ll have several run-time dependencies that differ between the various BLAS libraries.   To run XHPL.EXE that links with AMD BLAS libs, you�ll need to have the following binaries in your working directory at run-time:
+
+                HPL.DAT
+                Libacml_dll.dll
+                Libacml_mv_dll.dll
+                Pgc.dll
+                Pgftnrtl.dll
+                Pgmp.dll
+
+If you want to use Intel�s MKL libraries instead, you can actually extract the required include/libs/runtime files out of the published MKL kit without redistributing the whole thing.   The MKL run-time dependencies are:
+
+                HPL.DAT
+                Libguide40.dll
+                Mkl_def.dll
+                Mkl_p4n.dll
+	
+	
